@@ -16,6 +16,7 @@ import {
   anthropicSSEToResponses,
 } from "../upstream/translator";
 import { handleStreamingResponse, readSseEvents } from "../upstream/streaming";
+import { normalizeResponseFormat } from "../upstream/response-format";
 import {
   callCodexResponses,
   normalizeCodexCompactBody,
@@ -486,6 +487,17 @@ export function createChatCompletionsHandler(
   return async (req: Request, resp: ExpressResponse): Promise<void> => {
     try {
       const body = req.body;
+      // Structured-output schemas from generic generators omit the fields strict
+      // mode requires, and both upstreams 400 rather than defaulting them. Fix the
+      // request rather than making every client fix its generator.
+      if (
+        normalizeResponseFormat(body) &&
+        isDebugLevel(config.debug, "errors")
+      ) {
+        console.log(
+          "[openai] tightened response_format json_schema for strict mode",
+        );
+      }
       if (
         !body.messages ||
         !Array.isArray(body.messages) ||
@@ -804,7 +816,8 @@ export function createResponsesCompactHandler(
 
           const codexCompactUsage = {
             inputTokens: usage?.input_tokens || streamUsage?.inputTokens || 0,
-            outputTokens: usage?.output_tokens || streamUsage?.outputTokens || 0,
+            outputTokens:
+              usage?.output_tokens || streamUsage?.outputTokens || 0,
             cacheCreationInputTokens: 0,
             cacheReadInputTokens:
               usage?.input_tokens_details?.cached_tokens ||
