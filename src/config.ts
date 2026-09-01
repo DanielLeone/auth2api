@@ -51,6 +51,28 @@ export interface StatsConfig {
 
 export type DebugMode = "off" | "errors" | "verbose";
 
+/**
+ * Local embeddings. Unlike everything else here this is not a proxy: there is no
+ * upstream to forward to, since Anthropic has no embeddings API and the Codex
+ * backend is chat-only. auth2api runs the model itself, lazily, on first request.
+ */
+export interface EmbeddingsConfig {
+  /** Default true. Costs nothing until something actually calls /v1/embeddings,
+   *  and the endpoint 501s with an actionable message until `url` + `api-key` are
+   *  set, so leaving it enabled is safe. */
+  enabled: boolean;
+  /** An OpenAI-compatible /v1/embeddings URL. Empty means the endpoint fails
+   *  loudly rather than guessing. */
+  url: string;
+  /** Bearer token for `url`, sent only when non-empty. A local llama-server wants
+   *  no auth; api.openai.com and Voyage do. */
+  "api-key": string;
+  /** Model to request when the caller does not name one. Substituting here lets a
+   *  client that hardcodes an OpenAI model name work against a local embedder. */
+  model: string;
+  "timeout-ms": number;
+}
+
 export interface Config {
   host: string;
   port: number;
@@ -60,6 +82,7 @@ export interface Config {
   cloaking: CloakingConfig;
   timeouts: TimeoutConfig;
   stats: StatsConfig;
+  embeddings: EmbeddingsConfig;
   debug: DebugMode;
 }
 
@@ -85,6 +108,15 @@ const DEFAULT_RAW: RawConfig = {
   },
   stats: {
     enabled: true,
+  },
+  embeddings: {
+    enabled: true,
+    // Empty by design: a wrong embeddings upstream poisons a vector store silently
+    // and with no error anywhere, so this refuses to guess. See handlers/embeddings.ts.
+    url: "",
+    "api-key": "",
+    model: "nomic-embed-text-v1.5",
+    "timeout-ms": 60000,
   },
   debug: "off",
 };
@@ -132,6 +164,7 @@ export function loadConfig(configPath?: string): Config {
       cloaking: { ...DEFAULT_RAW.cloaking, ...(parsed.cloaking || {}) },
       timeouts: { ...DEFAULT_RAW.timeouts, ...(parsed.timeouts || {}) },
       stats: { ...DEFAULT_RAW.stats, ...(parsed.stats || {}) },
+      embeddings: { ...DEFAULT_RAW.embeddings, ...(parsed.embeddings || {}) },
     };
   }
 

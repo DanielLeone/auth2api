@@ -65,3 +65,33 @@ cloaking:
     # agent-base-url is the legacy alias; both keys point at api2.cursor.sh now.
     agent-base-url: "https://api2.cursor.sh"
     api-base-url: "https://api2.cursor.sh"
+
+# Embeddings — a straight proxy to an OpenAI-compatible /v1/embeddings service.
+#
+# This is the one endpoint auth2api cannot serve from the accounts it holds, and
+# it does NOT run a model itself. Two reasons, both measured rather than assumed:
+#
+#   Anthropic publishes no embeddings model at all. POST api.anthropic.com/v1/embeddings
+#   -> 404, while /v1/messages -> 401: a route that does not exist versus one that
+#   wants auth. Their docs say the same and point at Voyage AI.
+#
+#   The Codex account's token DOES authenticate against api.openai.com -- it returns
+#   429 billing_not_active where a junk token returns 401 invalid_api_key. So that
+#   path needs platform billing enabling, not a different credential.
+#
+# With `url` empty the endpoint returns 501 with an actionable message rather than
+# guessing. That is deliberate: a wrong embedding upstream poisons a vector store
+# silently, and every retrieval built on it degrades with no error to explain why.
+#
+# Point it at whichever suits:
+#   local llama-server   url: "http://<host>:28888/v1/embeddings"   (no api-key)
+#   OpenAI               url: "https://api.openai.com/v1/embeddings"  + api-key
+#   Voyage AI            url: "https://api.voyageai.com/v1/embeddings" + api-key
+#
+# `model` is only a default for callers that omit one -- the caller's model wins.
+embeddings:
+  enabled: true
+  url: ""
+  api-key: ""
+  model: "nomic-embed-text-v1.5"
+  timeout-ms: 60000

@@ -12,6 +12,10 @@ import {
   createCountTokensHandler,
 } from "./handlers/anthropic";
 import { StatsRecorder } from "./stats/recorder";
+import {
+  createEmbeddingsHandler,
+  embeddingModelEntry,
+} from "./handlers/embeddings";
 
 // Simple in-memory rate limiter per IP
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -261,7 +265,10 @@ export function createServer(
         owned_by: m.owned_by,
       })),
     );
-    res.json({ object: "list", data });
+    res.json({
+      object: "list",
+      data: [...data, ...embeddingModelEntry(config)],
+    });
   });
 
   // Routes — OpenAI compatible
@@ -282,6 +289,9 @@ export function createServer(
     "/backend-api/codex/responses/compact",
     createResponsesCompactHandler(config, registry),
   );
+
+  // Routes — OpenAI compatible, served locally rather than proxied
+  app.post("/v1/embeddings", createEmbeddingsHandler(config));
 
   // Routes — Anthropic native passthrough
   app.post("/v1/messages", createMessagesHandler(config, registry));
