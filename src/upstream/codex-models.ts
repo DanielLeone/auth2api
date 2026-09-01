@@ -1,20 +1,33 @@
 import { AccountManager } from "../accounts/manager";
+import { DEFAULT_CLI_VERSION, DEFAULT_ORIGINATOR } from "./codex-api";
 
 const BASE_URL = "https://chatgpt.com/backend-api";
 const MODELS_PATH = "/codex/models";
 const CACHE_TTL_MS = 5 * 60 * 1000; // matches codex-rs/models-manager DEFAULT_MODEL_CACHE_TTL
-const CLIENT_VERSION = "auth2api/1.0.0";
+// Upstream validates the SHAPE of this: "auth2api/1.0.0" was rejected outright
+// with HTTP 400 {"detail":"Invalid client_version format"}, which fetchUpstream
+// swallows -- so every /v1/models call quietly served FALLBACK_MODELS below and
+// the live list was never once consulted. It must be a bare semver.
+//
+// It is also the same capability gate as the chat path, so it is deliberately the
+// same constant rather than a second literal that can drift out of step. Note the
+// `cloaking.codex.cli-version` YAML override does NOT reach here: providers are
+// constructed with only an authDir, and threading Config through the registry for
+// a model listing is not worth the churn. Overriding the default in code covers
+// the case that matters.
+const CLIENT_VERSION = DEFAULT_CLI_VERSION;
 
 // Static fallback used when no account is loaded or the upstream /codex/models
 // call fails. User-confirmed list of models currently accepted by the
 // ChatGPT-account codex backend; kept private since the upstream proxy is the
 // authoritative source — this list only papers over startup and outages.
 const FALLBACK_MODELS = [
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
-  "gpt-5.3-codex",
-  "gpt-5.2",
 ];
 
 interface UpstreamModel {
@@ -43,10 +56,19 @@ async function fetchUpstream(
   const account = result.account;
 
   const url = `${BASE_URL}${MODELS_PATH}?client_version=${encodeURIComponent(CLIENT_VERSION)}`;
+  const platform =
+    process.platform === "darwin"
+      ? "macos"
+      : process.platform === "win32"
+        ? "windows"
+        : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "x86_64";
   const headers: Record<string, string> = {
     Authorization: `Bearer ${account.token.accessToken}`,
     Accept: "application/json",
-    "User-Agent": `auth2api/1.0.0`,
+    "User-Agent": `${DEFAULT_ORIGINATOR}/${CLIENT_VERSION} (${platform}; ${arch})`,
+    originator: DEFAULT_ORIGINATOR,
+    version: CLIENT_VERSION,
   };
   if (account.chatgptAccountId) {
     headers["ChatGPT-Account-ID"] = account.chatgptAccountId;

@@ -8,12 +8,19 @@ const BASE_URL = "https://chatgpt.com/backend-api";
 const RESPONSES_PATH = "/codex/responses";
 const RESPONSES_COMPACT_PATH = "/codex/responses/compact";
 
-const DEFAULT_ORIGINATOR = "codex_cli_rs";
-// Bumped from 0.40.0 — backend now version-gates `gpt-5.3-codex` and rejects
-// older versions with "requires a newer version of Codex". Matches latest
-// @openai/codex on npm at the time of writing. Override via
-// `cloaking.codex.cli-version` if upstream's minimum changes again.
-const DEFAULT_CLI_VERSION = "0.125.0";
+export const DEFAULT_ORIGINATOR = "codex_cli_rs";
+// The backend gates which models an account may use on this declared version, so
+// it is a capability switch and not merely cosmetic. Measured against
+// /codex/models on 2026-09-01 with the same token:
+//
+//   0.125.0 -> gpt-5.4, gpt-5.4-mini, gpt-5.5
+//   0.152.0 -> the above plus gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra
+//
+// So an out-of-date value here does not fail loudly; the newer models simply are
+// not offered, and a request naming one is rejected with "requires a newer
+// version of Codex". Keep this at the latest @openai/codex release. Override via
+// `cloaking.codex.cli-version` when upstream moves again.
+export const DEFAULT_CLI_VERSION = "0.152.0";
 
 function buildUserAgent(config: Config): string {
   const codex = config.cloaking.codex || {};
