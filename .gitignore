@@ -13,3 +13,6 @@ config.yaml
 # OS metadata
 .DS_Store
 Thumbs.db
+
+.auth2api
+build-tag-and-push.sh
