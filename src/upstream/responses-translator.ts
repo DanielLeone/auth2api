@@ -215,7 +215,22 @@ export function chatToResponsesRequest(body: any): any {
         parameters: t.function.parameters,
       }));
   }
-  if (body.tool_choice) out.tool_choice = body.tool_choice;
+  if (body.tool_choice) {
+    // Chat Completions nests a named function under `function`, while the
+    // Responses API expects the function name directly on the choice object.
+    // Passing the Chat shape through makes codex reject it with
+    // `Missing required parameter: 'tool_choice.name'`.
+    if (body.tool_choice.type === "function") {
+      const name = body.tool_choice.name || body.tool_choice.function?.name;
+      out.tool_choice = name
+        ? { type: "function", name }
+        : body.tool_choice;
+    } else {
+      // String choices (`auto`, `required`, `none`) use the same shape in
+      // both APIs.
+      out.tool_choice = body.tool_choice;
+    }
+  }
   if (body.parallel_tool_calls === false) out.parallel_tool_calls = false;
 
   // messages → input + (optionally) instructions.
@@ -342,9 +357,12 @@ export function anthropicToResponsesRequest(body: any): any {
     if (body.tool_choice.type === "auto") out.tool_choice = "auto";
     else if (body.tool_choice.type === "any") out.tool_choice = "required";
     else if (body.tool_choice.type === "tool" && body.tool_choice.name) {
+      // Responses uses `{type:"function", name}`. The nested `function`
+      // member is the Chat Completions shape and causes codex to report that
+      // `tool_choice.name` is missing.
       out.tool_choice = {
         type: "function",
-        function: { name: body.tool_choice.name },
+        name: body.tool_choice.name,
       };
     }
   }

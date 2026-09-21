@@ -102,6 +102,27 @@ test("chatToResponsesRequest: converts assistant tool_calls to function_call ite
   });
 });
 
+test("chatToResponsesRequest: maps named tool_choice to Responses shape", () => {
+  const out = chatToResponsesRequest({
+    model: "gpt-5.5-medium",
+    messages: [{ role: "user", content: "check the weather" }],
+    tools: [
+      {
+        type: "function",
+        function: { name: "get_weather", parameters: { type: "object" } },
+      },
+    ],
+    tool_choice: {
+      type: "function",
+      function: { name: "get_weather" },
+    },
+  });
+  assert.deepEqual(out.tool_choice, {
+    type: "function",
+    name: "get_weather",
+  });
+});
+
 test("chatToResponsesRequest: maps response_format json_schema and reasoning_effort", () => {
   const out = chatToResponsesRequest({
     model: "gpt-5.5-medium",
@@ -187,6 +208,25 @@ test("anthropicToResponsesRequest: converts tool_use / tool_result blocks", () =
   assert.equal(out.input[2].output, "sunny");
   assert.equal(out.tools[0].name, "get_weather");
   assert.equal(out.tools[0].type, "function");
+});
+
+test("anthropicToResponsesRequest: maps named tool_choice to Responses shape", () => {
+  const out = anthropicToResponsesRequest({
+    model: "claude-sonnet-4-5",
+    max_tokens: 256,
+    tools: [
+      {
+        name: "get_weather",
+        input_schema: { type: "object" },
+      },
+    ],
+    tool_choice: { type: "tool", name: "get_weather" },
+    messages: [{ role: "user", content: "check the weather" }],
+  });
+  assert.deepEqual(out.tool_choice, {
+    type: "function",
+    name: "get_weather",
+  });
 });
 
 test("anthropicToResponsesRequest: array system → instructions joined", () => {
