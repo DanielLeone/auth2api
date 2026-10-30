@@ -619,6 +619,82 @@ test("responsesSSEToAnthropic: the final message_delta carries input and cached 
   assert.deepEqual(data.usage, { input_tokens: 200, cache_read_input_tokens: 1000, output_tokens: 80 });
 });
 
+function textOf(out: string[]): string {
+  return out
+    .filter((e) => e.startsWith("event: content_block_delta"))
+    .map((e) => JSON.parse(e.split("data: ")[1]).delta?.text ?? "")
+    .join("");
+}
+
+function messageItem(phase: string) {
+  return { item: { type: "message", phase } };
+}
+
+test("responsesSSEToAnthropic: commentary a final answer restates is dropped", () => {
+  const state = makeResponsesToAnthropicState("gpt-6-luna");
+  const out = [
+    ...responsesSSEToAnthropic("response.created", {}, state),
+    ...responsesSSEToAnthropic("response.output_item.added", messageItem("commentary"), state),
+    ...responsesSSEToAnthropic("response.output_text.delta", { delta: "Mrrp. Afternoon!" }, state),
+    ...responsesSSEToAnthropic("response.output_item.added", messageItem("final_answer"), state),
+    ...responsesSSEToAnthropic("response.output_text.delta", { delta: "Afternoon!" }, state),
+    ...responsesSSEToAnthropic("response.completed", { response: { status: "completed" } }, state),
+  ];
+  assert.equal(textOf(out), "Afternoon!");
+});
+
+test("responsesSSEToAnthropic: commentary before a tool call is kept as text", () => {
+  const state = makeResponsesToAnthropicState("gpt-6-luna");
+  const out = [
+    ...responsesSSEToAnthropic("response.created", {}, state),
+    ...responsesSSEToAnthropic("response.output_item.added", messageItem("commentary"), state),
+    ...responsesSSEToAnthropic("response.output_text.delta", { delta: "Checking the poller." }, state),
+    ...responsesSSEToAnthropic(
+      "response.output_item.added",
+      { item: { type: "function_call", call_id: "call_1", name: "f" } },
+      state,
+    ),
+    ...responsesSSEToAnthropic("response.completed", { response: { status: "completed" } }, state),
+  ];
+  const all = out.join("");
+  assert.equal(textOf(out), "Checking the poller.");
+  assert.ok(all.indexOf("text_delta") < all.indexOf('"type":"tool_use"'));
+});
+
+test("responsesSSEToAnthropic: commentary with nothing after it is still sent", () => {
+  const state = makeResponsesToAnthropicState("gpt-6-luna");
+  const out = [
+    ...responsesSSEToAnthropic("response.created", {}, state),
+    ...responsesSSEToAnthropic("response.output_item.added", messageItem("commentary"), state),
+    ...responsesSSEToAnthropic("response.output_text.delta", { delta: "Here." }, state),
+    ...responsesSSEToAnthropic("response.completed", { response: { status: "completed" } }, state),
+  ];
+  assert.equal(textOf(out), "Here.");
+});
+
+test("responsesToAnthropicMessage: commentary a final answer restates is dropped", () => {
+  const msg = (phase: string, text: string) => ({
+    type: "message",
+    phase,
+    content: [{ type: "output_text", text }],
+  });
+  const out = responsesToAnthropicMessage(
+    { output: [msg("commentary", "Mrrp. Afternoon!"), msg("final_answer", "Afternoon!")] },
+    "gpt-6-luna",
+  );
+  assert.deepEqual(out.content, [{ type: "text", text: "Afternoon!" }]);
+  const kept = responsesToAnthropicMessage(
+    {
+      output: [
+        msg("commentary", "Checking."),
+        { type: "function_call", call_id: "c1", name: "f", arguments: "{}" },
+      ],
+    },
+    "gpt-6-luna",
+  );
+  assert.equal(kept.content[0].text, "Checking.");
+});
+
 // ───────────────── readSseEvents (shared drain helper) ─────────────────
 
 test("readSseEvents: emits each event/data pair in order", async () => {

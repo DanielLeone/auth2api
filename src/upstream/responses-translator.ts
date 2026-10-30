@@ -505,8 +505,16 @@ export function responsesToChatCompletion(resp: any, model: string): any {
 
 export function responsesToAnthropicMessage(resp: any, model: string): any {
   const content: any[] = [];
+  const output: any[] = resp?.output || [];
 
-  for (const item of resp?.output || []) {
+  for (const [i, item] of output.entries()) {
+    // Commentary that a final answer restates (before any tool call) is dropped, as on the stream.
+    if (item.type === "message" && item.phase === "commentary") {
+      const next = output
+        .slice(i + 1)
+        .find((o: any) => o.type === "function_call" || (o.type === "message" && o.phase === "final_answer"));
+      if (next?.type === "message") continue;
+    }
     if (item.type === "reasoning" && Array.isArray(item.summary)) {
       const t = item.summary
         .map((s: any) => (s?.type === "summary_text" ? s.text : ""))
@@ -750,6 +758,11 @@ export interface ResponsesToAnthropicState {
   nextBlockIndex: number;
   messageStartSent: boolean;
   stopReason: string;
+  // Newer codex models tag each message item with a phase: "commentary" (a preamble or narration) or
+  // "final_answer". Commentary is held back until we know what follows: kept as text before a tool call, dropped
+  // when a final answer restates it.
+  phase: string;
+  commentary: string;
 }
 
 export function makeResponsesToAnthropicState(
@@ -771,7 +784,50 @@ export function makeResponsesToAnthropicState(
     nextBlockIndex: 0,
     messageStartSent: false,
     stopReason: "end_turn",
+    phase: "",
+    commentary: "",
   };
+}
+
+// emitText opens a text block if needed (closing any open thinking block) and streams text into it.
+function emitText(state: ResponsesToAnthropicState, text: string): string[] {
+  const out = ensureMessageStart(state);
+  if (state.thinkingOpen) {
+    out.push(
+      sseEvent("content_block_stop", {
+        type: "content_block_stop",
+        index: state.thinkingIndex,
+      }),
+    );
+    state.thinkingOpen = false;
+  }
+  if (!state.textOpen) {
+    state.textIndex = state.nextBlockIndex++;
+    state.textOpen = true;
+    out.push(
+      sseEvent("content_block_start", {
+        type: "content_block_start",
+        index: state.textIndex,
+        content_block: { type: "text", text: "" },
+      }),
+    );
+  }
+  out.push(
+    sseEvent("content_block_delta", {
+      type: "content_block_delta",
+      index: state.textIndex,
+      delta: { type: "text_delta", text },
+    }),
+  );
+  return out;
+}
+
+// flushCommentary emits held-back commentary as text: nothing followed it that restates it.
+function flushCommentary(state: ResponsesToAnthropicState): string[] {
+  if (!state.commentary) return [];
+  const text = state.commentary;
+  state.commentary = "";
+  return emitText(state, text);
 }
 
 function sseEvent(event: string, payload: unknown): string {
@@ -871,41 +927,23 @@ export function responsesSSEToAnthropic(
     case "response.output_text.delta": {
       const delta = data?.delta;
       if (typeof delta !== "string" || !delta) return [];
-      const out = ensureMessageStart(state);
-      if (state.thinkingOpen) {
-        out.push(
-          sseEvent("content_block_stop", {
-            type: "content_block_stop",
-            index: state.thinkingIndex,
-          }),
-        );
-        state.thinkingOpen = false;
+      if (state.phase === "commentary") {
+        state.commentary += delta;
+        return ensureMessageStart(state);
       }
-      if (!state.textOpen) {
-        state.textIndex = state.nextBlockIndex++;
-        state.textOpen = true;
-        out.push(
-          sseEvent("content_block_start", {
-            type: "content_block_start",
-            index: state.textIndex,
-            content_block: { type: "text", text: "" },
-          }),
-        );
-      }
-      out.push(
-        sseEvent("content_block_delta", {
-          type: "content_block_delta",
-          index: state.textIndex,
-          delta: { type: "text_delta", text: delta },
-        }),
-      );
-      return out;
+      return emitText(state, delta);
     }
 
     case "response.output_item.added": {
       const item = data?.item;
+      if (item?.type === "message") {
+        state.phase = typeof item.phase === "string" ? item.phase : "";
+        // A final answer restates the commentary before it.
+        if (state.phase === "final_answer") state.commentary = "";
+        return [];
+      }
       if (item?.type === "function_call" && item.call_id) {
-        const out = ensureMessageStart(state);
+        const out = [...ensureMessageStart(state), ...flushCommentary(state)];
         // Tool blocks come after text/reasoning per Anthropic convention.
         if (state.thinkingOpen) {
           out.push(
@@ -985,7 +1023,7 @@ export function responsesSSEToAnthropic(
       if (r?.status === "incomplete" && state.stopReason === "end_turn") {
         state.stopReason = "max_tokens";
       }
-      const out = ensureMessageStart(state);
+      const out = [...ensureMessageStart(state), ...flushCommentary(state)];
       out.push(...closeOpenBlocks(state));
       out.push(
         sseEvent("message_delta", {
