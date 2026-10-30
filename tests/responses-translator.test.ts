@@ -599,6 +599,26 @@ test("responsesSSEToAnthropic: tool calls become tool_use blocks with input_json
   assert.match(all, /"stop_reason":"tool_use"/);
 });
 
+test("responsesSSEToAnthropic: the final message_delta carries input and cached token usage", () => {
+  const state = makeResponsesToAnthropicState("gpt-6-luna");
+  const out = [
+    ...responsesSSEToAnthropic("response.created", {}, state),
+    ...responsesSSEToAnthropic(
+      "response.completed",
+      {
+        response: {
+          status: "completed",
+          usage: { input_tokens: 1200, output_tokens: 80, input_tokens_details: { cached_tokens: 1000 } },
+        },
+      },
+      state,
+    ),
+  ];
+  const delta = out.find((e) => e.startsWith("event: message_delta"))!;
+  const data = JSON.parse(delta.split("data: ")[1]);
+  assert.deepEqual(data.usage, { input_tokens: 200, cache_read_input_tokens: 1000, output_tokens: 80 });
+});
+
 // ───────────────── readSseEvents (shared drain helper) ─────────────────
 
 test("readSseEvents: emits each event/data pair in order", async () => {

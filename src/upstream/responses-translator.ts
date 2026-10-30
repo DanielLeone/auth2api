@@ -732,6 +732,7 @@ export interface ResponsesToAnthropicState {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
   cacheReadTokens: number;
   // Block tracking — Anthropic requires sequential indices and explicit
   // start/stop bracketing per block.
@@ -759,6 +760,7 @@ export function makeResponsesToAnthropicState(
     model,
     inputTokens: 0,
     outputTokens: 0,
+    cachedTokens: 0,
     cacheReadTokens: 0,
     thinkingOpen: false,
     thinkingIndex: -1,
@@ -978,6 +980,7 @@ export function responsesSSEToAnthropic(
       if (r?.usage) {
         state.inputTokens = r.usage.input_tokens || 0;
         state.outputTokens = r.usage.output_tokens || 0;
+        state.cachedTokens = r.usage.input_tokens_details?.cached_tokens || 0;
       }
       if (r?.status === "incomplete" && state.stopReason === "end_turn") {
         state.stopReason = "max_tokens";
@@ -988,7 +991,12 @@ export function responsesSSEToAnthropic(
         sseEvent("message_delta", {
           type: "message_delta",
           delta: { stop_reason: state.stopReason, stop_sequence: null },
-          usage: { output_tokens: state.outputTokens },
+          // Anthropic's input_tokens excludes cache reads; OpenAI's includes them.
+          usage: {
+            input_tokens: state.inputTokens - state.cachedTokens,
+            cache_read_input_tokens: state.cachedTokens,
+            output_tokens: state.outputTokens,
+          },
         }),
       );
       out.push(sseEvent("message_stop", { type: "message_stop" }));
